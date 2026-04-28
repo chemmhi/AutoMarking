@@ -36,6 +36,25 @@
 
         <div class="field-grid">
           <label class="field">
+            <span>中间层地址</span>
+            <input
+              id="proxyEndpoint"
+              type="url"
+              placeholder="https://4hv6hmtj54.coze.site/run"
+            />
+          </label>
+          <label class="field">
+            <span>中间层 Token</span>
+            <input
+              id="proxyToken"
+              type="password"
+              placeholder="输入 Bearer Token"
+            />
+          </label>
+        </div>
+
+        <div class="field-grid">
+          <label class="field">
             <span>DeepSeek 接口地址</span>
             <input
               id="deepseekEndpoint"
@@ -159,6 +178,8 @@
 
     <canvas id="captureCanvas" class="hidden-capture"></canvas>
 
+    <script src="app-config.js"></script>
+    <script src="request-proxy.js"></script>
     <script src="sidepanel.js"></script>
   </body>
 </html>

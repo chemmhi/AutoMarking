@@ -56,7 +56,22 @@
     return new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
   }
 
-  function getSubjectSignature(subjectElement) {
+  function getImageHrefSignature(subjectElement) {
+    const imageHrefs = Array.from(subjectElement.querySelectorAll("image"))
+      .map((image) => {
+        const href =
+          image.getAttribute("href") ??
+          image.getAttributeNS("http://www.w3.org/1999/xlink", "href") ??
+          image.href?.baseVal ??
+          "";
+        return href.trim();
+      })
+      .filter(Boolean);
+
+    if (imageHrefs.length > 0) {
+      return JSON.stringify(imageHrefs);
+    }
+
     const text = (subjectElement.textContent ?? "")
       .replace(/\s+/g, " ")
       .trim()
@@ -130,7 +145,7 @@
         height: window.innerHeight,
         devicePixelRatio: window.devicePixelRatio
       },
-      signature: getSubjectSignature(subjectElement),
+      signature: getImageHrefSignature(subjectElement),
       url: window.location.href,
       title: document.title
     };
@@ -139,7 +154,7 @@
   async function getPaperSignature() {
     const subjectElement = getSubjectElement();
     return {
-      signature: getSubjectSignature(subjectElement),
+      signature: getImageHrefSignature(subjectElement),
       url: window.location.href
     };
   }

@@ -6,10 +6,14 @@
   const DIRECTORY_HANDLE_KEY = "temp-root-directory";
   const DEFAULT_DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions";
   const DEFAULT_DEEPSEEK_MODEL = "deepseek-chat";
+  const APP_CONFIG = window.AutoMarkingAppConfig ?? {};
+  const DEFAULT_PROXY_ENDPOINT = APP_CONFIG.proxy?.endpoint ?? "";
+  const DEFAULT_PROXY_TOKEN = APP_CONFIG.proxy?.token ?? "";
 
-  const secretFields = ["ocrToken", "deepseekApiKey"];
+  const secretFields = ["ocrToken", "proxyToken", "deepseekApiKey"];
   const nonSecretFields = [
     "ocrEndpoint",
+    "proxyEndpoint",
     "deepseekEndpoint",
     "deepseekModel",
     "referenceAnswer",
@@ -23,6 +27,8 @@
   const dom = {
     ocrEndpoint: document.getElementById("ocrEndpoint"),
     ocrToken: document.getElementById("ocrToken"),
+    proxyEndpoint: document.getElementById("proxyEndpoint"),
+    proxyToken: document.getElementById("proxyToken"),
     deepseekEndpoint: document.getElementById("deepseekEndpoint"),
     deepseekModel: document.getElementById("deepseekModel"),
     deepseekApiKey: document.getElementById("deepseekApiKey"),
@@ -204,9 +210,10 @@
     });
   }
 
-  function addLog(message, level = "info") {
+  function addLog(message, level = "info", fullMessage = message) {
     const item = document.createElement("article");
     item.className = "log-item";
+    item.title = String(fullMessage ?? "");
 
     const header = document.createElement("div");
     header.className = "log-item-header";
@@ -224,6 +231,7 @@
     const messageNode = document.createElement("p");
     messageNode.className = "log-item-message";
     messageNode.textContent = message;
+    messageNode.title = String(fullMessage ?? "");
 
     header.append(levelNode, timeNode);
     item.append(header, messageNode);
@@ -255,6 +263,27 @@
     }
 
     dom.directoryStatus.textContent = `已选择：${state.tempRootHandle.name}`;
+  }
+
+  function summarizeLogText(value, maxLength = 400) {
+    const normalized = String(value ?? "").replace(/\s+/g, " ").trim();
+    if (normalized.length <= maxLength) {
+      return normalized;
+    }
+    return `${normalized.slice(0, maxLength)}...`;
+  }
+
+  function stripHtmlTags(value) {
+    return String(value ?? "")
+      .replace(/<img\b[^>]*>/gi, " ")
+      .replace(/<\/?(div|span|p|br|strong|em|section|article)[^>]*>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/&lt;/gi, "<")
+      .replace(/&gt;/gi, ">")
+      .replace(/&amp;/gi, "&")
+      .replace(/\s+/g, " ")
+      .trim();
   }
 
   function setRunningState(running) {
@@ -299,6 +328,8 @@
     return {
       ocrEndpoint: normalizeUrl(dom.ocrEndpoint.value),
       ocrToken: dom.ocrToken.value.trim(),
+      proxyEndpoint: normalizeUrl(dom.proxyEndpoint.value, DEFAULT_PROXY_ENDPOINT),
+      proxyToken: dom.proxyToken.value.trim() || DEFAULT_PROXY_TOKEN,
       deepseekEndpoint: normalizeUrl(dom.deepseekEndpoint.value, DEFAULT_DEEPSEEK_ENDPOINT),
       deepseekModel: dom.deepseekModel.value.trim() || DEFAULT_DEEPSEEK_MODEL,
       deepseekApiKey: dom.deepseekApiKey.value.trim(),
@@ -317,6 +348,12 @@
     }
     if (!settings.ocrToken) {
       throw new Error("请填写 OCR Token。");
+    }
+    if (!settings.proxyEndpoint) {
+      throw new Error("请填写中间层地址。");
+    }
+    if (!settings.proxyToken) {
+      throw new Error("请填写中间层 Token。");
     }
     if (!settings.deepseekEndpoint) {
       throw new Error("请填写 DeepSeek 接口地址。");
@@ -363,6 +400,8 @@
     const stored = await chrome.storage.local.get(SETTINGS_KEY);
     const payload = stored[SETTINGS_KEY];
     if (!payload) {
+      dom.proxyEndpoint.value = DEFAULT_PROXY_ENDPOINT;
+      dom.proxyToken.value = DEFAULT_PROXY_TOKEN;
       dom.deepseekEndpoint.value = DEFAULT_DEEPSEEK_ENDPOINT;
       dom.deepseekModel.value = DEFAULT_DEEPSEEK_MODEL;
       return;
@@ -379,6 +418,13 @@
     const secrets = payload.secrets ?? {};
     for (const field of secretFields) {
       dom[field].value = await decryptSecret(secrets[field]);
+    }
+
+    if (!dom.proxyEndpoint.value && DEFAULT_PROXY_ENDPOINT) {
+      dom.proxyEndpoint.value = DEFAULT_PROXY_ENDPOINT;
+    }
+    if (!dom.proxyToken.value && DEFAULT_PROXY_TOKEN) {
+      dom.proxyToken.value = DEFAULT_PROXY_TOKEN;
     }
   }
 
@@ -569,7 +615,8 @@
 
     return {
       blob,
-      signature
+      signature,
+      url: context.url
     };
   }
 
@@ -646,7 +693,6 @@
   async function performOcr(settings, blob) {
     ensureRunning();
     const base64Image = await blobToBase64(blob);
-    const endpoint = new URL(settings.ocrEndpoint);
     const payload = {
       file: base64Image,
       fileType: 1,
@@ -656,26 +702,45 @@
     };
 
     const controller = createAbortController();
-    let response;
+    let proxyResult;
     try {
-      response = await fetch(endpoint.toString(), {
+      proxyResult = await window.AutoMarkingProxy.forwardHttpRequest({
+        proxyUrl: settings.proxyEndpoint,
+        proxyToken: settings.proxyToken,
+        url: settings.ocrEndpoint,
         method: "POST",
         headers: {
           "Authorization": `token ${settings.ocrToken}`,
           "Content-Type": "application/json"
         },
-        body: JSON.stringify(payload),
+        body: payload,
         signal: controller.signal
       });
     } finally {
       state.abortControllers.delete(controller);
     }
 
-    if (!response.ok) {
-      throw new Error(`OCR 请求失败：HTTP ${response.status}`);
+    if (Number(proxyResult.upstreamStatus) >= 400) {
+      const compactErrorText = String(proxyResult.bodyText ?? "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 240);
+      throw new Error(
+        compactErrorText
+          ? `OCR 请求失败：HTTP ${proxyResult.upstreamStatus}，响应：${compactErrorText}`
+          : `OCR 请求失败：HTTP ${proxyResult.upstreamStatus}`
+      );
     }
 
-    const data = await response.json();
+    const rawResponseBody = proxyResult.bodyJson?.response_body;
+    const data =
+      typeof rawResponseBody === "string"
+        ? JSON.parse(rawResponseBody)
+        : rawResponseBody;
+    if (!data || typeof data !== "object") {
+      throw new Error("OCR 返回格式异常，无法解析 JSON。");
+    }
+
     if (data.error_msg) {
       throw new Error(`OCR 服务异常：${data.error_msg}`);
     }
@@ -694,11 +759,13 @@
       .join("\n\n")
       .trim();
 
-    if (!text) {
+    const sanitizedText = stripHtmlTags(text);
+
+    if (!sanitizedText) {
       throw new Error("OCR 未识别出任何文本。");
     }
 
-    return text;
+    return sanitizedText;
   }
 
   function buildScoringPrompt(settings, ocrText) {
@@ -706,7 +773,7 @@
       "你是一名严格且稳定的阅卷老师。",
       `本题满分为 ${settings.maxScore} 分，请只依据标准答案与学生作答进行评分。`,
       "输出必须是 JSON，对象字段固定为 score 和 reason。",
-      "score 必须是数字，不要带单位；reason 必须是简短中文，控制在 50 字以内。",
+      "score 必须是数字，不要带单位；reason 必须是简短中文，给出得分和扣分理由，控制在 50 字以内。",
       "如果学生答案与标准答案不完全一致，但语义正确且覆盖关键得分点，应酌情给分。",
       "",
       "【标准答案 / 评分要点】",
@@ -799,24 +866,24 @@
     };
   }
 
-  async function waitForNextPaper(tabId, previousSignature) {
-    const deadline = Date.now() + 30_000;
-
-    while (Date.now() < deadline) {
+  async function waitForNextPaper(tabId, previousSignature, previousUrl) {
+    while (true) {
       ensureRunning();
-      await wait(700);
+      await wait(1000);
 
       try {
         const context = await sendTabMessage(tabId, { type: "GET_PAPER_SIGNATURE" });
-        if (context.signature !== previousSignature) {
+        if (
+          context.signature !== previousSignature ||
+          (previousUrl && context.url && context.url !== previousUrl)
+        ) {
+          await wait(300);
           return;
         }
       } catch (_error) {
         // 页面切换或内容脚本重载时，下一轮继续尝试。
       }
     }
-
-    throw new Error("等待下一份试卷超时，请确认页面是否已成功跳转。");
   }
 
   async function runGrading(settings) {
@@ -842,7 +909,7 @@
         setStatus(`处理中 ${index}/${settings.paperCount}`, "running");
         addLog(`开始处理第 ${index} 份。`);
 
-        const { blob, signature } = await captureSubjectArea(state.activeTabId);
+        const { blob, signature, url } = await captureSubjectArea(state.activeTabId);
         const tempFileName = `第${index}份-待评分.png`;
         await writeFile(state.tempRootHandle, tempFileName, blob);
         state.writtenFileNames.push(tempFileName);
@@ -851,10 +918,20 @@
         addLog(`第 ${index} 份 OCR 识别中...`);
         const ocrText = await performOcr(settings, blob);
         addLog(`OCR 完成，第 ${index} 份识别到 ${ocrText.length} 个字符。`);
+        addLog(
+          `OCR 识别结果：${summarizeLogText(ocrText)}`,
+          "info",
+          `OCR 识别结果：${ocrText}`
+        );
 
         addLog(`第 ${index} 份 AI 评分中...`);
         const grading = await gradeWithDeepSeek(settings, ocrText);
         addLog(`AI 评分完成：${grading.score} 分。`);
+        addLog(
+          `评分理由：${summarizeLogText(grading.reason, 200)}`,
+          "info",
+          `评分理由：${grading.reason}`
+        );
 
         await sendTabMessage(state.activeTabId, {
           type: "SET_SCORE",
@@ -872,12 +949,19 @@
         updateProgress(index, settings.paperCount);
 
         if (settings.manualConfirm) {
-          addLog("已回填分数。由于开启手动确认，自动流程在当前份结束。");
-          setStatus("等待人工确认", "idle");
-          return {
-            completed: index,
-            finishedNaturally: false
-          };
+          if (index < settings.paperCount) {
+            addLog("已回填分数，等待人工点击提交并跳转到下一份试卷。");
+            setStatus("等待人工确认", "running");
+            await waitForNextPaper(state.activeTabId, signature, url);
+            addLog("检测到人工提交已完成，已进入下一份试卷。");
+            continue;
+          }
+
+          addLog("已回填最后一份分数，等待人工点击提交完成本次阅卷。");
+          setStatus("等待人工确认", "running");
+          await waitForNextPaper(state.activeTabId, signature, url);
+          addLog("检测到人工提交已完成，本次阅卷结束。");
+          break;
         }
 
         addLog(`正在提交第 ${index} 份...`);
@@ -885,7 +969,7 @@
 
         if (index < settings.paperCount) {
           addLog("等待下一份试卷加载...");
-          await waitForNextPaper(state.activeTabId, signature);
+          await waitForNextPaper(state.activeTabId, signature, url);
         }
       }
 
@@ -966,6 +1050,13 @@
     setStatus("空闲中", "idle");
     updateProgress(0, 0);
     updateDirectoryStatus();
+
+    if (DEFAULT_PROXY_ENDPOINT) {
+      dom.proxyEndpoint.value = DEFAULT_PROXY_ENDPOINT;
+    }
+    if (DEFAULT_PROXY_TOKEN) {
+      dom.proxyToken.value = DEFAULT_PROXY_TOKEN;
+    }
 
     await restoreSettings();
     await restoreDirectoryHandle();

@@ -1,3 +1,9 @@
+const ALLOWED_ORIGIN = "https://yue.haofenshu.com/";
+
+function isAllowedUrl(url) {
+  return typeof url === "string" && url.startsWith(ALLOWED_ORIGIN);
+}
+
 async function configureSidePanel() {
   if (!chrome.sidePanel?.setPanelBehavior) {
     return;
@@ -12,10 +18,52 @@ async function configureSidePanel() {
   }
 }
 
+async function updateSidePanelForTab(tabId, url) {
+  if (!chrome.sidePanel?.setOptions || typeof tabId !== "number") {
+    return;
+  }
+
+  try {
+    await chrome.sidePanel.setOptions({
+      tabId,
+      path: "sidepanel.html",
+      enabled: isAllowedUrl(url)
+    });
+  } catch (error) {
+    console.warn("Failed to update side panel options.", error);
+  }
+}
+
+async function refreshCurrentWindowTabs() {
+  try {
+    const tabs = await chrome.tabs.query({});
+    await Promise.all(tabs.map((tab) => updateSidePanelForTab(tab.id, tab.url)));
+  } catch (error) {
+    console.warn("Failed to refresh side panel availability.", error);
+  }
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   void configureSidePanel();
+  void refreshCurrentWindowTabs();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   void configureSidePanel();
+  void refreshCurrentWindowTabs();
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.url || changeInfo.status === "complete") {
+    void updateSidePanelForTab(tabId, tab.url ?? changeInfo.url);
+  }
+});
+
+chrome.tabs.onActivated.addListener(async ({ tabId }) => {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    await updateSidePanelForTab(tabId, tab.url);
+  } catch (error) {
+    console.warn("Failed to refresh active tab side panel state.", error);
+  }
 });

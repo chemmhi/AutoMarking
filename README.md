@@ -14,6 +14,8 @@
 ## 目录结构
 
 ```text
+app-config.js
+request-proxy.js
 manifest.json
 background.js
 content.js
@@ -30,12 +32,14 @@ README.md
 3. 选择“加载已解压的扩展程序”，指向当前目录
 4. 点击插件图标打开侧边栏
 5. 填写 OCR 与 DeepSeek 配置，输入标准答案 / 评分要点
-6. 选择一个本地目录作为临时截图目录
-7. 在目标阅卷页面点击“开始阅卷”
+6. 填写中间层地址与 Token
+7. 选择一个本地目录作为临时截图目录
+8. 在目标阅卷页面点击“开始阅卷”
 
 ## 关键假设
 
-- OCR 接口按你提供的飞桨 `layout-parsing` 示例协议工作：请求头使用 `Authorization: token xxx`，请求体使用 Base64 文件直传，截图按图片类型固定发送 `fileType: 1`。
+- OCR 请求默认走独立中间层转发：插件请求中间层，中间层再转发到飞桨 `layout-parsing` 接口，用于规避浏览器扩展 `Origin` 导致的 403。
+- 飞桨 OCR 上游请求头使用 `Authorization: token xxx`，请求体使用 Base64 文件直传，截图按图片类型固定发送 `fileType: 1`。
 - DeepSeek 接口按 OpenAI 兼容聊天补全格式工作。
 - 评分页面存在以下选择器：
   - 作答区域：`#subjectmark_content_svg`
@@ -45,6 +49,7 @@ README.md
 ## 已实现的增强项
 
 - Side Panel 配置面板
+- 独立中间层转发配置（地址 + Token）
 - API Key 本地 AES-GCM 加密存储
 - 目录句柄持久化（IndexedDB）
 - 手动确认模式
@@ -55,5 +60,6 @@ README.md
 ## 注意事项
 
 - 当前 OCR 配置项已适配为 `OCR 接口地址 + OCR Token`，不再使用 `AppID / API Key / Secret Key`。
+- 中间层默认配置可在 `app-config.js` 中维护，避免把代理实现细节硬编码到主流程。
 - 如评分站点在 `chrome://`、扩展页或其他受限页面中，Chrome 内容脚本无法注入。
 - 手动确认模式下，插件会在当前份回填分数后停止自动提交，以便人工审核。
