@@ -1,4 +1,5 @@
 const ALLOWED_ORIGIN = "https://yue.haofenshu.com/";
+const SIDE_PANEL_PATH = "sidepanel.html";
 
 function isAllowedUrl(url) {
   return typeof url === "string" && url.startsWith(ALLOWED_ORIGIN);
@@ -7,6 +8,16 @@ function isAllowedUrl(url) {
 async function configureSidePanel() {
   if (!chrome.sidePanel?.setPanelBehavior) {
     return;
+  }
+
+  if (chrome.sidePanel?.setOptions) {
+    try {
+      await chrome.sidePanel.setOptions({
+        enabled: false
+      });
+    } catch (error) {
+      console.warn("Failed to disable the default side panel.", error);
+    }
   }
 
   try {
@@ -23,11 +34,21 @@ async function updateSidePanelForTab(tabId, url) {
     return;
   }
 
+  const enabled = isAllowedUrl(url);
+
   try {
+    if (enabled) {
+      await chrome.sidePanel.setOptions({
+        tabId,
+        path: SIDE_PANEL_PATH,
+        enabled: true
+      });
+      return;
+    }
+
     await chrome.sidePanel.setOptions({
       tabId,
-      path: "sidepanel.html",
-      enabled: isAllowedUrl(url)
+      enabled: false
     });
   } catch (error) {
     console.warn("Failed to update side panel options.", error);

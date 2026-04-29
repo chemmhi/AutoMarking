@@ -4,11 +4,14 @@
   const IDB_NAME = "automarking-db";
   const IDB_STORE = "handles";
   const DIRECTORY_HANDLE_KEY = "temp-root-directory";
+  const PANEL_STATE_KEY = "automarking.panelState";
+  const PAPER_SEQUENCE_KEY = "automarking.paperSequence";
   const DEFAULT_DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions";
   const DEFAULT_DEEPSEEK_MODEL = "deepseek-chat";
   const APP_CONFIG = window.AutoMarkingAppConfig ?? {};
   const DEFAULT_PROXY_ENDPOINT = APP_CONFIG.proxy?.endpoint ?? "";
   const DEFAULT_PROXY_TOKEN = APP_CONFIG.proxy?.token ?? "";
+  const ALLOWED_ORIGIN = "https://yue.haofenshu.com/";
 
   const secretFields = ["ocrToken", "proxyToken", "deepseekApiKey"];
   const nonSecretFields = [
@@ -40,7 +43,8 @@
     deleteTempFiles: document.getElementById("deleteTempFiles"),
     pickDirectoryButton: document.getElementById("pickDirectoryButton"),
     directoryStatus: document.getElementById("directoryStatus"),
-    saveSettingsButton: document.getElementById("saveSettingsButton"),
+    paperSequenceStatus: document.getElementById("paperSequenceStatus"),
+    resetCounterButton: document.getElementById("resetCounterButton"),
     startButton: document.getElementById("startButton"),
     stopButton: document.getElementById("stopButton"),
     clearLogsButton: document.getElementById("clearLogsButton"),
@@ -54,17 +58,92 @@
   const state = {
     running: false,
     stopRequested: false,
+    activeTabSupported: false,
     activeTabId: null,
     activeWindowId: null,
     tempRootHandle: null,
     writtenFileNames: [],
+    paperSequence: 0,
     abortControllers: new Set(),
+    autoSaveTimer: null,
     currentCount: 0,
     totalCount: 0
   };
 
   function wait(ms) {
     return new Promise((resolve) => window.setTimeout(resolve, ms));
+  }
+
+  function isAllowedUrl(url) {
+    return typeof url === "string" && url.startsWith(ALLOWED_ORIGIN);
+  }
+
+  async function savePanelState(panelState) {
+    await chrome.storage.local.set({
+      [PANEL_STATE_KEY]: panelState
+    });
+  }
+
+  async function loadPanelState() {
+    const stored = await chrome.storage.local.get(PANEL_STATE_KEY);
+    return stored[PANEL_STATE_KEY] ?? {};
+  }
+
+  async function loadPaperSequence() {
+    const stored = await chrome.storage.local.get(PAPER_SEQUENCE_KEY);
+    const value = Number(stored[PAPER_SEQUENCE_KEY] ?? 0);
+    state.paperSequence = Number.isFinite(value) && value >= 0 ? value : 0;
+    updatePaperSequenceStatus();
+  }
+
+  async function savePaperSequence() {
+    await chrome.storage.local.set({
+      [PAPER_SEQUENCE_KEY]: state.paperSequence
+    });
+    updatePaperSequenceStatus();
+  }
+
+  function updatePaperSequenceStatus() {
+    dom.paperSequenceStatus.textContent = `当前累计编号：${state.paperSequence}`;
+  }
+
+  async function consumePaperSequence() {
+    state.paperSequence += 1;
+    await savePaperSequence();
+    return state.paperSequence;
+  }
+
+  async function resetPaperSequence() {
+    state.paperSequence = 0;
+    await savePaperSequence();
+    addLog("累计编号已清零。");
+  }
+
+  async function initializeCollapsiblePanels() {
+    const panelState = await loadPanelState();
+    const panels = Array.from(document.querySelectorAll(".collapsible-panel"));
+
+    for (const panel of panels) {
+      const panelId = panel.dataset.panelId;
+      const toggle = panel.querySelector(".panel-toggle");
+      if (!panelId || !(toggle instanceof HTMLButtonElement)) {
+        continue;
+      }
+
+      const applyCollapsedState = (collapsed) => {
+        panel.classList.toggle("is-collapsed", collapsed);
+        toggle.setAttribute("aria-expanded", String(!collapsed));
+      };
+
+      applyCollapsedState(Boolean(panelState[panelId]));
+
+      toggle.addEventListener("click", async () => {
+        const nextCollapsed = !panel.classList.contains("is-collapsed");
+        applyCollapsedState(nextCollapsed);
+        panelState[panelId] = nextCollapsed;
+        await savePanelState(panelState);
+      });
+    }
   }
 
   function toBase64(bytes) {
@@ -288,10 +367,10 @@
 
   function setRunningState(running) {
     state.running = running;
-    dom.startButton.disabled = running;
+    dom.startButton.disabled = running || !state.activeTabSupported;
     dom.stopButton.disabled = !running;
-    dom.pickDirectoryButton.disabled = running;
-    dom.saveSettingsButton.disabled = running;
+    dom.pickDirectoryButton.disabled = running || !state.activeTabSupported;
+    dom.resetCounterButton.disabled = running || !state.activeTabSupported;
   }
 
   function createAbortController() {
@@ -375,7 +454,8 @@
     }
   }
 
-  async function saveSettings() {
+  async function saveSettings(options = {}) {
+    const { silent = false } = options;
     const current = readFormValues();
     const payload = {};
 
@@ -393,7 +473,60 @@
       [SETTINGS_KEY]: payload
     });
 
-    addLog("配置已保存到本地。");
+    if (!silent) {
+      addLog("配置已保存到本地。");
+    }
+  }
+
+  function scheduleAutoSave() {
+    if (state.running) {
+      return;
+    }
+
+    if (state.autoSaveTimer) {
+      window.clearTimeout(state.autoSaveTimer);
+    }
+
+    state.autoSaveTimer = window.setTimeout(() => {
+      state.autoSaveTimer = null;
+      saveSettings({ silent: true }).catch((error) => {
+        addLog(
+          `自动保存配置失败：${error instanceof Error ? error.message : String(error)}`,
+          "error"
+        );
+      });
+    }, 500);
+  }
+
+  function bindAutoSaveEvents() {
+    const fields = [
+      dom.ocrEndpoint,
+      dom.ocrToken,
+      dom.proxyEndpoint,
+      dom.proxyToken,
+      dom.deepseekEndpoint,
+      dom.deepseekModel,
+      dom.deepseekApiKey,
+      dom.referenceAnswer,
+      dom.maxScore,
+      dom.paperCount,
+      dom.customPrompt,
+      dom.manualConfirm,
+      dom.deleteTempFiles
+    ];
+
+    for (const field of fields) {
+      if (!field) {
+        continue;
+      }
+
+      const eventName =
+        field instanceof HTMLInputElement &&
+        field.type === "checkbox"
+          ? "change"
+          : "input";
+      field.addEventListener(eventName, scheduleAutoSave);
+    }
   }
 
   async function restoreSettings() {
@@ -495,6 +628,35 @@
     return activeTab;
   }
 
+  async function refreshActiveTabSupport() {
+    try {
+      const activeTab = await getActiveTab();
+      state.activeTabSupported = isAllowedUrl(activeTab.url);
+    } catch (_error) {
+      state.activeTabSupported = false;
+    }
+
+    setRunningState(state.running);
+
+    if (!state.running) {
+      setStatus(
+        state.activeTabSupported ? "绌洪棽涓?" : "璇峰垏鎹㈠埌闃呭嵎椤甸潰",
+        state.activeTabSupported ? "idle" : "error"
+      );
+    }
+  }
+
+  async function ensureSupportedActiveTab() {
+    const activeTab = await getActiveTab();
+    if (!isAllowedUrl(activeTab.url)) {
+      throw new Error(
+        `褰撳墠渚ц竟鏍忎粎鏀寔 ${ALLOWED_ORIGIN}銆傝鍒囨崲鍥炶鍩熷悕涓嬬殑闃呭嵎椤甸潰鍚庡啀缁х画銆?`
+      );
+    }
+
+    return activeTab;
+  }
+
   async function captureVisibleTab(windowId) {
     return new Promise((resolve, reject) => {
       chrome.tabs.captureVisibleTab(
@@ -549,75 +711,86 @@
   async function captureSubjectArea(tabId) {
     ensureRunning();
     const context = await sendTabMessage(tabId, { type: "GET_CAPTURE_CONTEXT" });
-    await wait(120);
-    const screenshotDataUrl = await captureVisibleTab(state.activeWindowId);
-    const screenshotImage = await loadImageFromDataUrl(screenshotDataUrl);
 
-    const { rect, viewport, signature } = context;
-    const imageWidth = screenshotImage.naturalWidth;
-    const imageHeight = screenshotImage.naturalHeight;
+    try {
+      await sendTabMessage(tabId, { type: "PREPARE_CAPTURE_ISOLATION" });
+      await wait(200);
+      const screenshotDataUrl = await captureVisibleTab(state.activeWindowId);
+      const screenshotImage = await loadImageFromDataUrl(screenshotDataUrl);
 
-    if (!imageWidth || !imageHeight) {
-      throw new Error("页面截图尚未就绪，无法裁剪。");
-    }
+      const { rect, viewport, signature } = context;
+      const imageWidth = screenshotImage.naturalWidth;
+      const imageHeight = screenshotImage.naturalHeight;
 
-    const scaleX = imageWidth / viewport.width;
-    const scaleY = imageHeight / viewport.height;
+      if (!imageWidth || !imageHeight) {
+        throw new Error("页面截图尚未就绪，无法裁剪。");
+      }
 
-    const sourceX = Math.max(0, Math.round(rect.left * scaleX));
-    const sourceY = Math.max(0, Math.round(rect.top * scaleY));
-    const sourceWidth = Math.min(
-      imageWidth - sourceX,
-      Math.max(1, Math.round(rect.width * scaleX))
-    );
-    const sourceHeight = Math.min(
-      imageHeight - sourceY,
-      Math.max(1, Math.round(rect.height * scaleY))
-    );
+      const scaleX = imageWidth / viewport.width;
+      const scaleY = imageHeight / viewport.height;
 
-    if (sourceWidth <= 0 || sourceHeight <= 0) {
-      throw new Error("裁剪区域超出可捕获范围。");
-    }
-
-    dom.captureCanvas.width = sourceWidth;
-    dom.captureCanvas.height = sourceHeight;
-    const ctx = dom.captureCanvas.getContext("2d");
-    if (!ctx) {
-      throw new Error("无法创建 Canvas 2D 上下文。");
-    }
-
-    ctx.clearRect(0, 0, sourceWidth, sourceHeight);
-    ctx.drawImage(
-      screenshotImage,
-      sourceX,
-      sourceY,
-      sourceWidth,
-      sourceHeight,
-      0,
-      0,
-      sourceWidth,
-      sourceHeight
-    );
-
-    const blob = await new Promise((resolve, reject) => {
-      dom.captureCanvas.toBlob(
-        (result) => {
-          if (result) {
-            resolve(result);
-            return;
-          }
-          reject(new Error("截图导出 PNG 失败。"));
-        },
-        "image/png",
-        1
+      const sourceX = Math.max(0, Math.round(rect.left * scaleX));
+      const sourceY = Math.max(0, Math.round(rect.top * scaleY));
+      const sourceWidth = Math.min(
+        imageWidth - sourceX,
+        Math.max(1, Math.round(rect.width * scaleX))
       );
-    });
+      const sourceHeight = Math.min(
+        imageHeight - sourceY,
+        Math.max(1, Math.round(rect.height * scaleY))
+      );
 
-    return {
-      blob,
-      signature,
-      url: context.url
-    };
+      if (sourceWidth <= 0 || sourceHeight <= 0) {
+        throw new Error("裁剪区域超出可捕获范围。");
+      }
+
+      dom.captureCanvas.width = sourceWidth;
+      dom.captureCanvas.height = sourceHeight;
+      const ctx = dom.captureCanvas.getContext("2d");
+      if (!ctx) {
+        throw new Error("无法创建 Canvas 2D 上下文。");
+      }
+
+      ctx.clearRect(0, 0, sourceWidth, sourceHeight);
+      ctx.drawImage(
+        screenshotImage,
+        sourceX,
+        sourceY,
+        sourceWidth,
+        sourceHeight,
+        0,
+        0,
+        sourceWidth,
+        sourceHeight
+      );
+
+      const blob = await new Promise((resolve, reject) => {
+        dom.captureCanvas.toBlob(
+          (result) => {
+            if (result) {
+              resolve(result);
+              return;
+            }
+            reject(new Error("截图导出 PNG 失败。"));
+          },
+          "image/png",
+          1
+        );
+      });
+
+      return {
+        blob,
+        signature,
+        manualConfirmDoneId: context.manualConfirmDoneId,
+        url: context.url
+      };
+    } finally {
+      try {
+        await sendTabMessage(tabId, { type: "CLEANUP_CAPTURE_ISOLATION" });
+      } catch (_error) {
+        // 页面切换期间忽略恢复失败，避免吞掉主错误。
+      }
+    }
   }
 
   async function blobToBase64(blob) {
@@ -757,7 +930,8 @@
       .map((item) => String(item).trim())
       .filter(Boolean)
       .join("\n\n")
-      .trim();
+      .trim()
+      .replace(/[\{\}\$\_]/g, '');
 
     const sanitizedText = stripHtmlTags(text);
 
@@ -886,13 +1060,40 @@
     }
   }
 
+  async function waitForManualSubmitAndNextPaper(
+    tabId,
+    previousSignature,
+    previousUrl,
+    armId
+  ) {
+    while (true) {
+      ensureRunning();
+      await wait(1000);
+
+      try {
+        const context = await sendTabMessage(tabId, { type: "GET_PAPER_SIGNATURE" });
+        const manualSubmitDone = Number(context.manualConfirmDoneId) >= Number(armId);
+        const pageChanged =
+          context.signature !== previousSignature ||
+          (previousUrl && context.url && context.url !== previousUrl);
+
+        if (manualSubmitDone && pageChanged) {
+          await wait(300);
+          return;
+        }
+      } catch (_error) {
+        // 页面切换或内容脚本重载时，下一轮继续尝试。
+      }
+    }
+  }
+
   async function runGrading(settings) {
     setStatus("准备中", "running");
     updateProgress(0, settings.paperCount);
     state.stopRequested = false;
 
     try {
-      const activeTab = await getActiveTab();
+      const activeTab = await ensureSupportedActiveTab();
       if (isRestrictedCaptureUrl(activeTab.url)) {
         throw new Error(
           "当前页面是浏览器受限页面，无法截图。请切换到实际阅卷网页（http/https 页面）后再开始。"
@@ -907,24 +1108,25 @@
       for (let index = 1; index <= settings.paperCount; index += 1) {
         ensureRunning();
         setStatus(`处理中 ${index}/${settings.paperCount}`, "running");
-        addLog(`开始处理第 ${index} 份。`);
+        const serialNumber = await consumePaperSequence();
+        addLog(`开始处理累计第 ${serialNumber} 份。`);
 
         const { blob, signature, url } = await captureSubjectArea(state.activeTabId);
-        const tempFileName = `第${index}份-待评分.png`;
+        const tempFileName = `第${serialNumber}份-待评分.png`;
         await writeFile(state.tempRootHandle, tempFileName, blob);
         state.writtenFileNames.push(tempFileName);
-        addLog(`第 ${index} 份截图已保存。`);
+        addLog(`第 ${serialNumber} 份截图已保存。`);
 
-        addLog(`第 ${index} 份 OCR 识别中...`);
+        addLog(`第 ${serialNumber} 份 OCR 识别中...`);
         const ocrText = await performOcr(settings, blob);
-        addLog(`OCR 完成，第 ${index} 份识别到 ${ocrText.length} 个字符。`);
+        addLog(`OCR 完成，第 ${serialNumber} 份识别到 ${ocrText.length} 个字符。`);
         addLog(
           `OCR 识别结果：${summarizeLogText(ocrText)}`,
           "info",
           `OCR 识别结果：${ocrText}`
         );
 
-        addLog(`第 ${index} 份 AI 评分中...`);
+        addLog(`第 ${serialNumber} 份 AI 评分中...`);
         const grading = await gradeWithDeepSeek(settings, ocrText);
         addLog(`AI 评分完成：${grading.score} 分。`);
         addLog(
@@ -939,7 +1141,7 @@
           reason: grading.reason
         });
 
-        const finalFileName = `第${index}份-${grading.score}分.png`;
+        const finalFileName = `第${serialNumber}份-${grading.score}分.png`;
         await renameFile(state.tempRootHandle, tempFileName, finalFileName);
         state.writtenFileNames = state.writtenFileNames.map((name) =>
           name === tempFileName ? finalFileName : name
@@ -949,17 +1151,31 @@
         updateProgress(index, settings.paperCount);
 
         if (settings.manualConfirm) {
+          const armResult = await sendTabMessage(state.activeTabId, {
+            type: "ARM_MANUAL_CONFIRM"
+          });
+
           if (index < settings.paperCount) {
             addLog("已回填分数，等待人工点击提交并跳转到下一份试卷。");
             setStatus("等待人工确认", "running");
-            await waitForNextPaper(state.activeTabId, signature, url);
+            await waitForManualSubmitAndNextPaper(
+              state.activeTabId,
+              signature,
+              url,
+              armResult.armId
+            );
             addLog("检测到人工提交已完成，已进入下一份试卷。");
             continue;
           }
 
           addLog("已回填最后一份分数，等待人工点击提交完成本次阅卷。");
           setStatus("等待人工确认", "running");
-          await waitForNextPaper(state.activeTabId, signature, url);
+          await waitForManualSubmitAndNextPaper(
+            state.activeTabId,
+            signature,
+            url,
+            armResult.armId
+          );
           addLog("检测到人工提交已完成，本次阅卷结束。");
           break;
         }
@@ -997,7 +1213,7 @@
       validateSettings(settings);
       setRunningState(true);
       addLog("正在准备页面截图...");
-      await saveSettings();
+      await saveSettings({ silent: true });
 
       const result = await runGrading(settings);
       shouldDeleteTempFiles = result.finishedNaturally && settings.deleteTempFiles;
@@ -1050,6 +1266,7 @@
     setStatus("空闲中", "idle");
     updateProgress(0, 0);
     updateDirectoryStatus();
+    updatePaperSequenceStatus();
 
     if (DEFAULT_PROXY_ENDPOINT) {
       dom.proxyEndpoint.value = DEFAULT_PROXY_ENDPOINT;
@@ -1058,8 +1275,11 @@
       dom.proxyToken.value = DEFAULT_PROXY_TOKEN;
     }
 
+    await initializeCollapsiblePanels();
     await restoreSettings();
     await restoreDirectoryHandle();
+    await loadPaperSequence();
+    await refreshActiveTabSupport();
 
     dom.pickDirectoryButton.addEventListener("click", () => {
       handlePickDirectory().catch((error) => {
@@ -1070,8 +1290,16 @@
       });
     });
 
-    dom.saveSettingsButton.addEventListener("click", () => {
-      saveSettings().catch((error) => {
+    dom.resetCounterButton.addEventListener("click", () => {
+      if (state.running) {
+        return;
+      }
+
+      if (!window.confirm("确认将累计编号清零，并从第1份重新开始吗？")) {
+        return;
+      }
+
+      resetPaperSequence().catch((error) => {
         addLog(
           error instanceof Error ? error.message : String(error),
           "error"
@@ -1090,6 +1318,17 @@
 
     dom.stopButton.addEventListener("click", handleStop);
     dom.clearLogsButton.addEventListener("click", clearLogs);
+    bindAutoSaveEvents();
+
+    chrome.tabs.onActivated.addListener(() => {
+      void refreshActiveTabSupport();
+    });
+
+    chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
+      if (tab.active && (changeInfo.url || changeInfo.status === "complete")) {
+        void refreshActiveTabSupport();
+      }
+    });
   }
 
   void bootstrap();

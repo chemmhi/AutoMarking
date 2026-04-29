@@ -19,9 +19,6 @@
   "action": {
     "default_title": "AI 自动阅卷助手"
   },
-  "side_panel": {
-    "default_path": "sidepanel.html"
-  },
   "content_scripts": [
     {
       "matches": [

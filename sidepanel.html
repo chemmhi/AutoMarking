@@ -8,171 +8,196 @@
   </head>
   <body>
     <main class="app-shell">
-      <section class="panel">
-        <div class="panel-title-row">
-          <h2>接口配置</h2>
-          <button id="saveSettingsButton" class="ghost-button" type="button">
-            保存配置
-          </button>
-        </div>
-
-        <label class="field">
-          <span>OCR 接口地址</span>
-          <input
-            id="ocrEndpoint"
-            type="url"
-            placeholder="https://80b6s6b4g3mfk8a6.aistudio-app.com/layout-parsing"
-          />
-        </label>
-
-        <label class="field">
-          <span>OCR Token</span>
-          <input
-            id="ocrToken"
-            type="password"
-            placeholder="输入飞桨 layout-parsing token"
-          />
-        </label>
-
-        <div class="field-grid">
+      <section class="panel collapsible-panel" data-panel-id="api">
+        <button class="panel-toggle" type="button" aria-expanded="true">
+          <span class="panel-toggle-title">接口配置</span>
+          <span class="panel-toggle-icon" aria-hidden="true"></span>
+        </button>
+        <div class="panel-content">
           <label class="field">
-            <span>中间层地址</span>
+            <span>OCR 接口地址</span>
             <input
-              id="proxyEndpoint"
+              id="ocrEndpoint"
               type="url"
-              placeholder="https://4hv6hmtj54.coze.site/run"
+              placeholder="https://80b6s6b4g3mfk8a6.aistudio-app.com/layout-parsing"
             />
           </label>
+
           <label class="field">
-            <span>中间层 Token</span>
+            <span>OCR Token</span>
             <input
-              id="proxyToken"
+              id="ocrToken"
               type="password"
-              placeholder="输入 Bearer Token"
+              placeholder="输入飞桨 layout-parsing token"
             />
           </label>
-        </div>
 
-        <div class="field-grid">
+          <div class="field-grid">
+            <label class="field">
+              <span>中间层地址</span>
+              <input
+                id="proxyEndpoint"
+                type="url"
+                placeholder="https://4hv6hmtj54.coze.site/run"
+              />
+            </label>
+            <label class="field">
+              <span>中间层 Token</span>
+              <input
+                id="proxyToken"
+                type="password"
+                placeholder="输入 Bearer Token"
+              />
+            </label>
+          </div>
+
+          <div class="field-grid">
+            <label class="field">
+              <span>DeepSeek 接口地址</span>
+              <input
+                id="deepseekEndpoint"
+                type="url"
+                placeholder="https://api.deepseek.com/chat/completions"
+              />
+            </label>
+            <label class="field">
+              <span>模型名称</span>
+              <input
+                id="deepseekModel"
+                type="text"
+                placeholder="deepseek-chat"
+                value="deepseek-chat"
+              />
+            </label>
+          </div>
+
           <label class="field">
-            <span>DeepSeek 接口地址</span>
+            <span>DeepSeek API Key</span>
             <input
-              id="deepseekEndpoint"
-              type="url"
-              placeholder="https://api.deepseek.com/chat/completions"
+              id="deepseekApiKey"
+              type="password"
+              placeholder="输入 DeepSeek API Key"
             />
-          </label>
-          <label class="field">
-            <span>模型名称</span>
-            <input
-              id="deepseekModel"
-              type="text"
-              placeholder="deepseek-chat"
-              value="deepseek-chat"
-            />
-          </label>
-        </div>
-
-        <label class="field">
-          <span>DeepSeek API Key</span>
-          <input
-            id="deepseekApiKey"
-            type="password"
-            placeholder="输入 DeepSeek API Key"
-          />
-        </label>
-      </section>
-
-      <section class="panel">
-        <h2>评分配置</h2>
-
-        <label class="field">
-          <span>标准答案 / 评分要点</span>
-          <textarea
-            id="referenceAnswer"
-            rows="5"
-            placeholder="输入标准答案、评分规则或关键得分点"
-          ></textarea>
-        </label>
-
-        <div class="field-grid">
-          <label class="field">
-            <span>满分</span>
-            <input id="maxScore" type="number" min="1" step="0.5" value="10" />
-          </label>
-          <label class="field">
-            <span>阅卷份数</span>
-            <input id="paperCount" type="number" min="1" step="1" value="1" />
-          </label>
-        </div>
-
-        <label class="field">
-          <span>补充 Prompt</span>
-          <textarea
-            id="customPrompt"
-            rows="3"
-            placeholder="可选：补充评分细则、扣分规则或输出约束"
-          ></textarea>
-        </label>
-
-        <div class="toggle-list">
-          <label class="toggle-item">
-            <input id="manualConfirm" type="checkbox" />
-            <span>手动确认分数</span>
-          </label>
-          <label class="toggle-item">
-            <input id="deleteTempFiles" type="checkbox" />
-            <span>阅卷结束自动删除临时文件</span>
           </label>
         </div>
       </section>
 
-      <section class="panel">
-        <h2>临时文件目录</h2>
-        <p class="panel-hint">
-          请选择一个目录。插件会将截图直接保存到该目录中。
-        </p>
+      <section class="panel collapsible-panel" data-panel-id="grading">
+        <button class="panel-toggle" type="button" aria-expanded="true">
+          <span class="panel-toggle-title">评分配置</span>
+          <span class="panel-toggle-icon" aria-hidden="true"></span>
+        </button>
+        <div class="panel-content">
+          <label class="field">
+            <span>标准答案 / 评分要点</span>
+            <textarea
+              id="referenceAnswer"
+              rows="5"
+              placeholder="输入标准答案、评分规则或关键得分点"
+            ></textarea>
+          </label>
 
-        <div class="directory-row">
-          <button id="pickDirectoryButton" class="primary-button" type="button">
-            选择目录
-          </button>
-          <div id="directoryStatus" class="directory-status">
-            尚未选择目录
+          <div class="field-grid">
+            <label class="field">
+              <span>满分</span>
+              <input id="maxScore" type="number" min="1" step="0.5" value="10" />
+            </label>
+            <label class="field">
+              <span>阅卷份数</span>
+              <input id="paperCount" type="number" min="1" step="1" value="1" />
+            </label>
+          </div>
+
+          <label class="field">
+            <span>补充 Prompt</span>
+            <textarea
+              id="customPrompt"
+              rows="3"
+              placeholder="可选：补充评分细则、扣分规则或输出约束"
+            ></textarea>
+          </label>
+
+          <div class="toggle-list">
+            <label class="toggle-item">
+              <input id="manualConfirm" type="checkbox" />
+              <span>手动确认分数</span>
+            </label>
+            <label class="toggle-item">
+              <input id="deleteTempFiles" type="checkbox" />
+              <span>阅卷结束自动删除临时文件</span>
+            </label>
           </div>
         </div>
       </section>
 
-      <section class="panel">
-        <div class="panel-title-row">
-          <h2>运行状态</h2>
-          <div id="progressMeta" class="progress-meta">0 / 0</div>
-        </div>
+      <section class="panel collapsible-panel" data-panel-id="directory">
+        <button class="panel-toggle" type="button" aria-expanded="true">
+          <span class="panel-toggle-title">临时文件目录</span>
+          <span class="panel-toggle-icon" aria-hidden="true"></span>
+        </button>
+        <div class="panel-content">
+          <p class="panel-hint">
+            请选择一个目录。插件会将截图直接保存到该目录中。
+          </p>
 
-        <div class="progress-track">
-          <div id="progressBar" class="progress-fill"></div>
-        </div>
+          <div class="directory-row">
+            <button id="pickDirectoryButton" class="primary-button" type="button">
+              选择目录
+            </button>
+            <div id="directoryStatus" class="directory-status">
+              尚未选择目录
+            </div>
+          </div>
 
-        <div class="action-row">
-          <button id="startButton" class="primary-button" type="button">
-            开始阅卷
-          </button>
-          <button id="stopButton" class="danger-button" type="button" disabled>
-            停止阅卷
-          </button>
+          <div class="counter-row">
+            <div id="paperSequenceStatus" class="counter-status">当前累计编号：0</div>
+            <button id="resetCounterButton" class="ghost-button" type="button">
+              清零计数
+            </button>
+          </div>
         </div>
-
-        <div id="statusBadge" class="status-badge idle">空闲中</div>
       </section>
 
-      <section class="panel">
-        <div class="panel-title-row">
-          <h2>执行日志</h2>
-          <button id="clearLogsButton" class="ghost-button" type="button">
-            清空
-          </button>
+      <section class="panel collapsible-panel" data-panel-id="status">
+        <button class="panel-toggle" type="button" aria-expanded="true">
+          <span class="panel-toggle-title">运行状态</span>
+          <span class="panel-toggle-icon" aria-hidden="true"></span>
+        </button>
+        <div class="panel-content">
+          <div class="panel-title-row">
+            <div id="progressMeta" class="progress-meta">0 / 0</div>
+          </div>
+
+          <div class="progress-track">
+            <div id="progressBar" class="progress-fill"></div>
+          </div>
+
+          <div class="action-row">
+            <button id="startButton" class="primary-button" type="button">
+              开始阅卷
+            </button>
+            <button id="stopButton" class="danger-button" type="button" disabled>
+              停止阅卷
+            </button>
+          </div>
+
+          <div id="statusBadge" class="status-badge idle">空闲中</div>
         </div>
-        <div id="logList" class="log-list"></div>
+      </section>
+
+      <section class="panel collapsible-panel" data-panel-id="logs">
+        <button class="panel-toggle" type="button" aria-expanded="true">
+          <span class="panel-toggle-title">执行日志</span>
+          <span class="panel-toggle-icon" aria-hidden="true"></span>
+        </button>
+        <div class="panel-content">
+          <div class="panel-title-row">
+            <button id="clearLogsButton" class="ghost-button" type="button">
+              清空
+            </button>
+          </div>
+          <div id="logList" class="log-list"></div>
+        </div>
       </section>
     </main>
 

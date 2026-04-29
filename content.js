@@ -2,6 +2,23 @@
   const SUBJECT_SELECTOR = "#subjectmark_content_svg";
   const SCORE_SELECTOR = ".score-input";
   const SUBMIT_SELECTOR = ".submit-button";
+  const MANUAL_CONFIRM_ARM_KEY = "automarking.manualConfirmArmId";
+  const MANUAL_CONFIRM_DONE_KEY = "automarking.manualConfirmDoneId";
+  const ISOLATION_STYLE_ID = "automarking-capture-isolation-style";
+  const ISOLATION_ROOT_ATTR = "data-automarking-isolating";
+  const ISOLATION_OVERLAY_ID = "automarking-capture-isolation-overlay";
+
+  let manualConfirmArmId = Number(sessionStorage.getItem(MANUAL_CONFIRM_ARM_KEY) ?? "0");
+  if (!Number.isFinite(manualConfirmArmId)) {
+    manualConfirmArmId = 0;
+  }
+
+  let manualConfirmDoneId = Number(sessionStorage.getItem(MANUAL_CONFIRM_DONE_KEY) ?? "0");
+  if (!Number.isFinite(manualConfirmDoneId)) {
+    manualConfirmDoneId = 0;
+  }
+
+  let isolationOverlay = null;
 
   function isVisible(element) {
     if (!element) {
@@ -54,6 +71,130 @@
 
   function nextFrame() {
     return new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
+  }
+
+  function ensureIsolationStyle() {
+    let styleElement = document.getElementById(ISOLATION_STYLE_ID);
+    if (styleElement) {
+      return styleElement;
+    }
+
+    styleElement = document.createElement("style");
+    styleElement.id = ISOLATION_STYLE_ID;
+    styleElement.textContent = `
+      html[${ISOLATION_ROOT_ATTR}="1"] body * {
+        visibility: hidden !important;
+      }
+
+      html[${ISOLATION_ROOT_ATTR}="1"] body *::before,
+      html[${ISOLATION_ROOT_ATTR}="1"] body *::after {
+        visibility: hidden !important;
+      }
+
+      html[${ISOLATION_ROOT_ATTR}="1"] body #${ISOLATION_OVERLAY_ID},
+      html[${ISOLATION_ROOT_ATTR}="1"] body #${ISOLATION_OVERLAY_ID} *,
+      html[${ISOLATION_ROOT_ATTR}="1"] body #${ISOLATION_OVERLAY_ID} *::before,
+      html[${ISOLATION_ROOT_ATTR}="1"] body #${ISOLATION_OVERLAY_ID} *::after {
+        visibility: visible !important;
+      }
+    `;
+    document.documentElement.appendChild(styleElement);
+    return styleElement;
+  }
+
+  function getIsolationBackdropColor() {
+    const candidates = [document.body, document.documentElement];
+    for (const candidate of candidates) {
+      if (!candidate) {
+        continue;
+      }
+
+      const color = window.getComputedStyle(candidate).backgroundColor;
+      if (color && color !== "transparent" && color !== "rgba(0, 0, 0, 0)") {
+        return color;
+      }
+    }
+
+    return "#ffffff";
+  }
+
+  function removeIsolationOverlay() {
+    isolationOverlay?.remove();
+    isolationOverlay = null;
+  }
+
+  async function prepareCaptureIsolation() {
+    const subjectElement = getSubjectElement();
+    const rect = subjectElement.getBoundingClientRect();
+    if (rect.width < 2 || rect.height < 2) {
+      throw new Error("浣滅瓟鍖哄煙灏哄寮傚父锛屾棤娉曟埅鍥俱€?");
+    }
+
+    ensureIsolationStyle();
+    removeIsolationOverlay();
+
+    const overlay = document.createElement("div");
+    overlay.id = ISOLATION_OVERLAY_ID;
+    overlay.setAttribute("aria-hidden", "true");
+    overlay.style.position = "fixed";
+    overlay.style.inset = "0";
+    overlay.style.zIndex = "2147483647";
+    overlay.style.pointerEvents = "none";
+    overlay.style.overflow = "hidden";
+    overlay.style.background = getIsolationBackdropColor();
+
+    const stage = document.createElement("div");
+    stage.style.position = "fixed";
+    stage.style.left = `${rect.left}px`;
+    stage.style.top = `${rect.top}px`;
+    stage.style.width = `${rect.width}px`;
+    stage.style.height = `${rect.height}px`;
+    stage.style.overflow = "hidden";
+
+    const clone = subjectElement.cloneNode(true);
+    if (clone instanceof Element) {
+      clone.style.setProperty("display", "block", "important");
+      clone.style.setProperty("width", `${rect.width}px`, "important");
+      clone.style.setProperty("height", `${rect.height}px`, "important");
+      clone.style.setProperty("margin", "0", "important");
+      clone.style.setProperty("transform", "none", "important");
+      clone.style.setProperty("max-width", "none", "important");
+      clone.style.setProperty("max-height", "none", "important");
+      clone.style.setProperty("pointer-events", "none", "important");
+    }
+
+    stage.appendChild(clone);
+    overlay.appendChild(stage);
+    (document.body ?? document.documentElement).appendChild(overlay);
+    isolationOverlay = overlay;
+
+    document.documentElement.setAttribute(ISOLATION_ROOT_ATTR, "1");
+    await nextFrame();
+    await nextFrame();
+    await wait(60);
+    return { ok: true };
+  }
+
+  async function cleanupCaptureIsolation() {
+    removeIsolationOverlay();
+    document.documentElement.removeAttribute(ISOLATION_ROOT_ATTR);
+    await nextFrame();
+    return { ok: true };
+  }
+
+  function armManualConfirm() {
+    manualConfirmArmId += 1;
+    sessionStorage.setItem(MANUAL_CONFIRM_ARM_KEY, String(manualConfirmArmId));
+    return manualConfirmArmId;
+  }
+
+  function markManualConfirmDoneIfArmed() {
+    if (manualConfirmArmId <= manualConfirmDoneId) {
+      return;
+    }
+
+    manualConfirmDoneId = manualConfirmArmId;
+    sessionStorage.setItem(MANUAL_CONFIRM_DONE_KEY, String(manualConfirmDoneId));
   }
 
   function getImageHrefSignature(subjectElement) {
@@ -146,6 +287,7 @@
         devicePixelRatio: window.devicePixelRatio
       },
       signature: getImageHrefSignature(subjectElement),
+      manualConfirmDoneId,
       url: window.location.href,
       title: document.title
     };
@@ -155,6 +297,7 @@
     const subjectElement = getSubjectElement();
     return {
       signature: getImageHrefSignature(subjectElement),
+      manualConfirmDoneId,
       url: window.location.href
     };
   }
@@ -185,6 +328,21 @@
     return { ok: true };
   }
 
+  document.addEventListener(
+    "click",
+    (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) {
+        return;
+      }
+
+      if (target.closest(SUBMIT_SELECTOR)) {
+        markManualConfirmDoneIfArmed();
+      }
+    },
+    true
+  );
+
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     (async () => {
       switch (message?.type) {
@@ -194,6 +352,12 @@
           return await getCaptureContext();
         case "GET_PAPER_SIGNATURE":
           return await getPaperSignature();
+        case "PREPARE_CAPTURE_ISOLATION":
+          return await prepareCaptureIsolation();
+        case "CLEANUP_CAPTURE_ISOLATION":
+          return await cleanupCaptureIsolation();
+        case "ARM_MANUAL_CONFIRM":
+          return { armId: armManualConfirm() };
         case "SET_SCORE":
           return await setScore(message);
         case "CLICK_SUBMIT":
