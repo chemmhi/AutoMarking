@@ -640,7 +640,7 @@
 
     if (!state.running) {
       setStatus(
-        state.activeTabSupported ? "绌洪棽涓?" : "璇峰垏鎹㈠埌闃呭嵎椤甸潰",
+        state.activeTabSupported ? "空闲中" : "请切换到阅卷页面",
         state.activeTabSupported ? "idle" : "error"
       );
     }
@@ -650,7 +650,7 @@
     const activeTab = await getActiveTab();
     if (!isAllowedUrl(activeTab.url)) {
       throw new Error(
-        `褰撳墠渚ц竟鏍忎粎鏀寔 ${ALLOWED_ORIGIN}銆傝鍒囨崲鍥炶鍩熷悕涓嬬殑闃呭嵎椤甸潰鍚庡啀缁х画銆?`
+        `当前侧边栏仅支持 ${ALLOWED_ORIGIN}。请切换回该域名下的阅卷页面后再继续。`
       );
     }
 
